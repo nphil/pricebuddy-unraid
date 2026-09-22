@@ -1,0 +1,60 @@
+#!/bin/bash
+# Prepares /config (database, app settings, generated secrets), then hands the
+# container to supervisord. Everything that must survive an update lives in /config.
+set -euo pipefail
+log() { echo "[pricebuddy] $*"; }
+
+mkdir -p /config/storage /config/mysql /run/mysqld
+chown mysql:mysql /config/mysql /run/mysqld
+
+# Secrets generated once, kept with the data so the folder moves as a unit.
+secrets=/config/secrets.env
+if [ ! -f "$secrets" ]; then
+    log "first start: generating secrets in $secrets"
+    umask 077
+    {
+        echo "DB_PASSWORD=$(head -c 24 /dev/urandom | base64 | tr -dc 'A-Za-z0-9')"
+        echo "APP_USER_PASSWORD=$(head -c 12 /dev/urandom | base64 | tr -dc 'A-Za-z0-9')"
+    } >"$secrets"
+    umask 022
+fi
+set -a; . "$secrets"; set +a
+# An admin password set in the template wins over the generated one.
+[ -n "${ADMIN_PASSWORD:-}" ] && export APP_USER_PASSWORD="$ADMIN_PASSWORD"
+export APP_USER_EMAIL="${ADMIN_EMAIL:-${APP_USER_EMAIL:-admin@example.com}}"
+export APP_TIMEZONE="${APP_TIMEZONE:-$TZ}"
+export ASSET_URL="${ASSET_URL:-${APP_URL:-}}"
+[ -z "$ASSET_URL" ] && unset ASSET_URL
+
+# Upstream keeps state in /app/storage and APP_KEY in /app/.env; both move to /config.
+# APP_KEY encrypts stored secrets (AI keys), so losing it loses them.
+if [ ! -L /app/storage ]; then
+    [ -z "$(ls -A /config/storage)" ] && cp -a /app/storage/. /config/storage/
+    rm -rf /app/storage && ln -s /config/storage /app/storage
+fi
+# Apache runs as www-data and must write here, as upstream arranges with 777.
+chmod -R 777 /config/storage
+touch /config/app.env
+ln -sfn /config/app.env /app/.env
+
+# The database: initialise once, then make sure the app's user and schema exist.
+if [ ! -d /config/mysql/mysql ]; then
+    log "first start: creating the database"
+    mariadb-install-db --user=mysql --datadir=/config/mysql --auth-root-authentication-method=socket >/dev/null
+fi
+mariadbd --user=mysql --datadir=/config/mysql --socket=/run/mysqld/mysqld.sock \
+    --skip-networking --skip-name-resolve &
+pid=$!
+for _ in $(seq 60); do mariadb-admin --socket=/run/mysqld/mysqld.sock ping >/dev/null 2>&1 && break; sleep 1; done
+mariadb --socket=/run/mysqld/mysqld.sock <<SQL
+CREATE DATABASE IF NOT EXISTS \`$DB_DATABASE\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE USER IF NOT EXISTS '$DB_USERNAME'@'127.0.0.1' IDENTIFIED BY '$DB_PASSWORD';
+ALTER USER '$DB_USERNAME'@'127.0.0.1' IDENTIFIED BY '$DB_PASSWORD';
+GRANT ALL PRIVILEGES ON \`$DB_DATABASE\`.* TO '$DB_USERNAME'@'127.0.0.1';
+FLUSH PRIVILEGES;
+SQL
+mariadb-admin --socket=/run/mysqld/mysqld.sock shutdown
+wait "$pid" || true
+
+log "PriceBuddy ${APP_VERSION:-?}, scraper SeleniumBase $(cat /SeleniumBase/.seleniumbase-version)"
+exec supervisord -c /etc/pricebuddy/supervisord.conf
