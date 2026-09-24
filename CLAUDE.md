@@ -16,6 +16,11 @@ the design. Traps that already cost a debugging round:
   script and adjust the two substitutions.
 - The seleniumbase version comes from the scraper image (`pip show` in the first stage), so
   the scraper code and its library stay the pair upstream tested.
+- **`ai-compat` exists because llama.cpp's `/v1/responses` drops `text.format`** when it
+  converts to chat completions (checked against llama.cpp master 2026-09-24), while keeping
+  unknown fields. The proxy adds the same schema as `response_format`. Remove it once
+  llama.cpp maps `text.format` itself: test by calling `/v1/responses` with a json_schema
+  `text.format` and no `response_format`, and see whether the reply is JSON.
 - Test an image on a real host before pushing: a push to `main` touching the image
   publishes a release.
 

@@ -1,0 +1,7 @@
+#!/bin/sh
+# Runs the AI compatibility proxy when AI_COMPAT_URL is set; otherwise idles so
+# supervisord does not keep restarting it.
+if [ -n "${AI_COMPAT_URL:-}" ]; then
+    exec /opt/scraper/bin/python /usr/local/lib/pricebuddy/ai-compat.py
+fi
+exec sleep infinity

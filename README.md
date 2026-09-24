@@ -43,6 +43,7 @@ afterwards; the variable only matters on first start.
 | `ADMIN_PASSWORD` | *(generated)* | That user's password, first start only. |
 | `DEFAULT_STORES_COUNTRY` | `all` (template: `usa`) | Built-in stores to create on first start: `usa`, `australia` or `all`. |
 | `AFFILIATE_ENABLED` | upstream's | Upstream's affiliate tagging of some store links. |
+| `AI_COMPAT_URL` | *(empty)* | A llama.cpp or llama-swap server for PriceBuddy's AI, base URL without `/v1`. See below. |
 | `TZ` | `UTC` | Time zone for the price check schedule. |
 
 Any other PriceBuddy or Laravel variable works as documented upstream.
@@ -66,6 +67,7 @@ notification tokens) can no longer be decrypted.
 | `mariadb` | Stands in for upstream's MySQL container, on `127.0.0.1:3306` only |
 | `scraper` | The API of [jez500/seleniumbase-scrapper](https://github.com/jez500/seleniumbase-scrapper), copied from its image, with the same SeleniumBase version and Google Chrome, on `127.0.0.1:3000` only |
 | `init` | Upstream's own start script: waits for the database, migrates, warms caches, then starts the three below |
+| `ai-compat` | The llama.cpp proxy above, on `127.0.0.1:9380` only; idle unless `AI_COMPAT_URL` is set |
 | `apache2`, `cron`, `queue-worker` | Upstream's own programs, unchanged |
 
 Two lines of upstream's start script are changed at build time, and the build fails if
@@ -76,6 +78,17 @@ print the database password into the log.
 The scraper's Chrome and PriceBuddy are both fixed at build time. A new PriceBuddy release
 rebuilds everything, which also brings a current Chrome. For a Chrome update between
 releases, run the workflow by hand.
+
+## AI on llama.cpp or llama-swap
+
+PriceBuddy's AI (price recovery and store-rule repair) asks for replies in a fixed JSON
+shape through OpenAI's `/v1/responses`. llama.cpp answers that endpoint but ignores the
+requested shape, so every AI call fails. Set `AI_COMPAT_URL` to the server (for example
+`http://192.168.1.10:9292`) and, in PriceBuddy's Settings under Integrations, add an
+**OpenAI** provider with base URL **`http://127.0.0.1:9380/v1`**, any API key, and your
+model's name. A small proxy inside the container passes the requested shape on in the form
+llama.cpp enforces; everything else goes through unchanged. OpenAI, Anthropic and Gemini
+need none of this.
 
 ## Operating it
 
